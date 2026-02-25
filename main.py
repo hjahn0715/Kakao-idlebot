@@ -102,6 +102,10 @@ def kakao_text_with_quick_replies(text: str, replies: list[tuple[str, str]]):
 def on_startup():
     init_db()
 
+@app.get("/")
+def root():
+    return {"ok": True, "service": "kakao-idlebot"}
+
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
