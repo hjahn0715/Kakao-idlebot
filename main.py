@@ -9,8 +9,10 @@ DB_PATH = "users.db"
 # ====== Time helpers (KST) ======
 KST = timezone(timedelta(hours=9))
 
+
 def now_kst_iso():
     return datetime.now(KST).isoformat()
+
 
 def today_kst_str():
     return datetime.now(KST).date().isoformat()
@@ -22,15 +24,17 @@ def db_connect():
     conn.row_factory = sqlite3.Row
     return conn
 
+
 def _ensure_column(conn: sqlite3.Connection, table: str, col: str, decl_sql: str):
     """
-    decl_sql example: "ALTER TABLE users ADD COLUMN job TEXT NOT NULL DEFAULT 'WARRIOR'"
+    decl_sql example: "ALTER TABLE users ADD COLUMN job TEXT"
     """
     cur = conn.cursor()
     cur.execute(f"PRAGMA table_info({table})")
     cols = {r[1] for r in cur.fetchall()}  # (cid, name, type, notnull, dflt_value, pk)
     if col not in cols:
         cur.execute(decl_sql)
+
 
 def init_db():
     conn = db_connect()
@@ -50,7 +54,7 @@ def init_db():
 
     # 신규 컬럼들 (기존 DB에도 안전하게 추가)
     _ensure_column(conn, "users", "job",
-                    "ALTER TABLE users ADD COLUMN job TEXT")
+                   "ALTER TABLE users ADD COLUMN job TEXT")
     _ensure_column(conn, "users", "stat_points",
                    "ALTER TABLE users ADD COLUMN stat_points INTEGER NOT NULL DEFAULT 0")
 
@@ -77,6 +81,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def get_or_create_user(kakao_user_id: str):
     conn = db_connect()
     cur = conn.cursor()
@@ -100,6 +105,7 @@ def get_or_create_user(kakao_user_id: str):
     conn.close()
     return row
 
+
 def update_user_fields(kakao_user_id: str, **fields):
     """
     Example: update_user_fields(id, level=2, gold=150, job='MAGE')
@@ -115,6 +121,7 @@ def update_user_fields(kakao_user_id: str, **fields):
     conn.commit()
     conn.close()
 
+
 def set_pending(kakao_user_id: str, pending: str | None):
     update_user_fields(kakao_user_id, pending=pending)
 
@@ -125,6 +132,7 @@ def kakao_text_response(text: str):
         "version": "2.0",
         "template": {"outputs": [{"simpleText": {"text": text}}]}
     }
+
 
 def kakao_text_with_quick_replies(text: str, replies: list[tuple[str, str]]):
     return {
@@ -147,37 +155,28 @@ SPD_CAP = 99
 LUK_CAP = 999
 LEVEL_CAP = 99
 
+
 def clamp(x: int, lo: int, hi: int) -> int:
     return lo if x < lo else hi if x > hi else x
 
-def job_main_stat(job: str) -> str:
+
+def job_main_stat(job: str | None) -> str:
     # job: WARRIOR / MAGE / NINJA
     return {"WARRIOR": "atk", "MAGE": "int_stat", "NINJA": "spd"}.get(job, "atk")
 
-def combat_power(user_row: sqlite3.Row) -> int:
+
+def combat_power(hp: int, atk: int, int_stat: int, spd: int, job: str | None) -> int:
     """
-    스펙 3.4 해석:
     전투력 = HP + 주스탯*3 + (부스탯 + 부스탯)
-    여기서 '부스탯 2개'는 LUK 제외, 나머지 2개(ATK/INT/SPD 중 주스탯 제외)를 더하는 방식으로 고정.
+    부스탯: ATK/INT/SPD 중 주스탯 제외 2개 (LUK는 전투력에서 제외)
     """
-    hp = int(user_row["hp"])
-    atk = int(user_row["atk"])
-    it = int(user_row["int_stat"])
-    spd = int(user_row["spd"])
-    job = user_row["job"]
     main = job_main_stat(job)
-
     if main == "atk":
-        main_v = atk
-        sub1, sub2 = it, spd
-    elif main == "int_stat":
-        main_v = it
-        sub1, sub2 = atk, spd
-    else:  # spd
-        main_v = spd
-        sub1, sub2 = atk, it
+        return hp + atk * 3 + int_stat + spd
+    if main == "int_stat":
+        return hp + int_stat * 3 + atk + spd
+    return hp + spd * 3 + atk + int_stat
 
-    return hp + main_v * 3 + sub1 + sub2
 
 def level_up_rolls(difficulty: str, luk: int) -> int:
     """
@@ -187,7 +186,7 @@ def level_up_rolls(difficulty: str, luk: int) -> int:
       - 어려움: 70%로 +1, 30%로 +2 (중복 상승 불가)
     LUK 보정: 각 상승 확률에 (LUK / 10000) 만큼 더함.
     """
-    bonus = luk / 10000.0  # e.g. luk=100 -> +1%
+    bonus = luk / 10000.0
     r = random.random()
 
     if difficulty == "쉬움":
@@ -197,7 +196,7 @@ def level_up_rolls(difficulty: str, luk: int) -> int:
     if difficulty == "보통":
         p2 = 0.10 + bonus
         p1 = 0.40 + bonus
-        # 중복 불가 -> 우선 +2 판정 후, 실패면 +1 판정
+        # +2 우선 판정 후, 실패면 +1 판정
         if r < p2:
             return 2
         return 1 if r < (p2 + p1) else 0
@@ -211,6 +210,7 @@ def level_up_rolls(difficulty: str, luk: int) -> int:
 
     return 0
 
+
 def fatigue_cost(difficulty: str) -> int:
     return {"쉬움": 1, "보통": 2, "어려움": 3}.get(difficulty, 999)
 
@@ -220,9 +220,11 @@ def fatigue_cost(difficulty: str) -> int:
 def on_startup():
     init_db()
 
+
 @app.get("/")
 def root():
     return {"ok": True, "service": "kakao-idlebot"}
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -238,13 +240,16 @@ async def webhook(request: Request):
     gold = int(user["gold"])
     weapon_level = int(user["weapon_level"])
     pending = user["pending"]
-    job = user["job"]
+
+    job = user["job"]  # None 가능
     stat_points = int(user["stat_points"])
+
     hp = int(user["hp"])
     atk = int(user["atk"])
     int_stat = int(user["int_stat"])
     spd = int(user["spd"])
     luk = int(user["luk"])
+
     fatigue = int(user["fatigue"])
     last_att = user["last_attendance"]
 
@@ -261,6 +266,7 @@ async def webhook(request: Request):
             "- /스탯\n"
             "- /출석\n"
             "- /강화\n"
+            "- /취소\n"
             "- /도움"
         )
 
@@ -269,14 +275,7 @@ async def webhook(request: Request):
         return kakao_text_response("✅ 대기 상태를 취소했어.")
 
     if msg in ["/내정보", "내정보", "/me"]:
-        main = job_main_stat(job)
-        if main == "atk":
-            power = hp + atk * 3 + int_stat + spd
-        elif main == "int_stat":
-            power = hp + int_stat * 3 + atk + spd
-        else:
-            power = hp + spd * 3 + atk + int_stat
-
+        power = combat_power(hp, atk, int_stat, spd, job)
         job_kr = {"WARRIOR": "전사", "MAGE": "마법사", "NINJA": "닌자"}.get(job, "미선택")
 
         return kakao_text_response(
@@ -315,14 +314,14 @@ async def webhook(request: Request):
         return kakao_text_response(
             "어느 스탯에 몇 포인트 투자할지 입력해줘.\n"
             "예시: HP 5 / ATK 3 / INT 2 / SPD 1 / LUK 4\n"
-            "(취소하려면 /취소)"
+            "(취소: /취소)"
         )
 
     if msg in ["/출석", "출석", "출석체크", "출석 체크"]:
         today = today_kst_str()
         if last_att == today:
             return kakao_text_response("✅ 오늘은 이미 출석했어. (피로도 +30은 하루 1회)")
-        fatigue = fatigue + 30
+        fatigue += 30
         update_user_fields(kakao_user_id, fatigue=fatigue, last_attendance=today)
         return kakao_text_response(f"✅ 출석 완료!\n피로도 +30\n현재 피로도: {fatigue}")
 
@@ -371,6 +370,7 @@ async def webhook(request: Request):
     # 1) Pending 처리 (기대 입력일 때만 처리, 아니면 막지 않음)
     # =========================
     if pending == "JOB_SELECT":
+        # 이미 직업이 설정되었으면 차단하고 pending 정리
         if job is not None:
             set_pending(kakao_user_id, None)
             return kakao_text_response("❌ 현재는 직업 변경이 불가능합니다.")
@@ -390,7 +390,7 @@ async def webhook(request: Request):
             update_user_fields(kakao_user_id, job=selected_job)
             return kakao_text_response(f"✅ 직업이 {choice}로 설정됐어.")
 
-        # 기대 입력이 아니면: 여기서 막지 말고 아래로 흘려보냄
+        # 기대 입력이 아니면: 아래 안내에서 처리
 
     elif pending == "STAT_ALLOC":
         parts = msg.upper().split()
@@ -446,7 +446,7 @@ async def webhook(request: Request):
                 set_pending(kakao_user_id, None)
                 return kakao_text_response(f"✅ LUK +{used} (현재 LUK {luk})\n남은 포인트: {stat_points - used}")
 
-        # 기대 입력이 아니면: 아래로 흘려보냄
+        # 기대 입력이 아니면: 아래 안내에서 처리
 
     elif pending == "ADVENTURE_SELECT":
         if msg.startswith("모험 "):
@@ -494,10 +494,10 @@ async def webhook(request: Request):
                 f"스탯포인트 +{gained_points} (보유 {stat_points})"
             )
 
-        # 기대 입력이 아니면: 아래로 흘려보냄
+        # 기대 입력이 아니면: 아래 안내에서 처리
 
     # =========================
-    # 2) pending 상태인데 기대 입력도/전역 명령도 아니면 "안내"만 (여기서만 안내)
+    # 2) pending 상태 안내 (여기서만 안내)
     # =========================
     if pending == "ADVENTURE_SELECT":
         return kakao_text_with_quick_replies(
@@ -515,113 +515,5 @@ async def webhook(request: Request):
             "예시: HP 5 / ATK 3 / INT 2 / SPD 1 / LUK 4\n"
             "(취소: /취소)"
         )
-
-    return kakao_text_response("모르는 명령어야. /도움 을 입력해봐.")
-
-    # ====== Commands ======
-    if msg in ["/내정보", "내정보", "/me"]:
-        # 최신 전투력 계산용으로 row 다시 읽는 대신 현재 변수로 간단 표기
-        # (정확 전투력은 DB row 기반이지만 값 동기화돼 있으니 OK)
-        tmp_user = dict(user)
-        tmp_user.update({"job": job, "hp": hp, "atk": atk, "int_stat": int_stat, "spd": spd, "luk": luk})
-        # sqlite3.Row처럼 접근 가능하게 만들기 귀찮으니, 그냥 간단 계산을 여기서 동일 로직으로 재계산
-        main = job_main_stat(job)
-        if main == "atk":
-            power = hp + atk * 3 + int_stat + spd
-        elif main == "int_stat":
-            power = hp + int_stat * 3 + atk + spd
-        else:
-            power = hp + spd * 3 + atk + int_stat
-
-        job_kr = {"WARRIOR": "전사", "MAGE": "마법사", "NINJA": "닌자"}.get(job, job)
-
-        return kakao_text_response(
-            f"📌 내정보\n"
-            f"직업: {job_kr}\n"
-            f"레벨: {level}\n"
-            f"피로도: {fatigue}\n"
-            f"스탯포인트: {stat_points}\n"
-            f"골드: {gold}\n"
-            f"무기강화: +{weapon_level}\n"
-            f"\n[스탯]\n"
-            f"HP {hp}/{HP_CAP}\n"
-            f"ATK {atk}/{ATK_CAP}\n"
-            f"INT {int_stat}/{INT_CAP}\n"
-            f"SPD {spd}/{SPD_CAP}\n"
-            f"LUK {luk}/{LUK_CAP}\n"
-            f"\n전투력: {power}"
-        )
-
-    if msg in ["/스탯", "스탯"]:
-        return kakao_text_response(
-            f"[스탯]\n"
-            f"HP {hp}/{HP_CAP}\n"
-            f"ATK {atk}/{ATK_CAP}\n"
-            f"INT {int_stat}/{INT_CAP}\n"
-            f"SPD {spd}/{SPD_CAP}\n"
-            f"LUK {luk}/{LUK_CAP}\n"
-            f"\n스탯포인트: {stat_points}\n"
-            f"투자하려면 '스탯 사용'을 입력해줘."
-        )
-
-    if msg in ["/직업", "직업"]:
-        # 이미 직업이 있으면 변경 불가
-        if job is not None:
-            return kakao_text_response("❌ 현재는 직업 변경이 불가능합니다.")
-
-        set_pending(kakao_user_id, "JOB_SELECT")
-        return kakao_text_with_quick_replies(
-            "직업을 선택해주세요.",
-            [("전사", "직업 전사"), ("마법사", "직업 마법사"), ("닌자", "직업 닌자")]
-        )
-
-    if msg in ["스탯 사용", "/스탯사용"]:
-        if stat_points <= 0:
-            return kakao_text_response("스탯 포인트가 없어. 모험으로 레벨업을 노려봐.")
-        set_pending(kakao_user_id, "STAT_ALLOC")
-        return kakao_text_response(
-            "어느 스탯에 몇 포인트 투자할지 입력해줘.\n"
-            "예시: HP 5 / ATK 3 / INT 2 / SPD 1 / LUK 4"
-        )
-
-    if msg in ["/모험", "모험"]:
-        set_pending(kakao_user_id, "ADVENTURE_SELECT")
-        return kakao_text_with_quick_replies(
-            "난이도를 선택해주세요.",
-            [("쉬움(피로1)", "모험 쉬움"), ("보통(피로2)", "모험 보통"), ("어려움(피로3)", "모험 어려움")]
-        )
-
-    if msg in ["/출석", "출석", "출석체크", "출석 체크"]:
-        today = today_kst_str()
-        if last_att == today:
-            return kakao_text_response("✅ 오늘은 이미 출석했어. (피로도 +30은 하루 1회)")
-        fatigue = fatigue + 30
-        update_user_fields(kakao_user_id, fatigue=fatigue, last_attendance=today)
-        return kakao_text_response(f"✅ 출석 완료!\n피로도 +30\n현재 피로도: {fatigue}")
-
-    if msg in ["/강화", "강화"]:
-        cost = 50 + weapon_level * 25
-        if gold < cost:
-            return kakao_text_response(f"💸 골드 부족!\n강화 비용: {cost}\n현재 골드: {gold}")
-
-        success_rate = max(10, 70 - weapon_level * 10)
-        roll = random.randint(1, 100)
-
-        gold -= cost
-        if roll <= success_rate:
-            weapon_level += 1
-            update_user_fields(kakao_user_id, gold=gold, weapon_level=weapon_level)
-            return kakao_text_response(
-                f"✨ 강화 성공! (+{weapon_level})\n"
-                f"(성공률 {success_rate}%, 비용 {cost})\n"
-                f"남은 골드: {gold}"
-            )
-        else:
-            update_user_fields(kakao_user_id, gold=gold, weapon_level=weapon_level)
-            return kakao_text_response(
-                f"💥 강화 실패…\n"
-                f"(성공률 {success_rate}%, 비용 {cost})\n"
-                f"남은 골드: {gold}"
-            )
 
     return kakao_text_response("모르는 명령어야. /도움 을 입력해봐.")
